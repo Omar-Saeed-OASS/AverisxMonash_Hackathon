@@ -11,6 +11,33 @@ When the server starts, it keeps checking Gmail in the background. When it finds
 
 Edit handle_email() in gmailapi.py to add your own logic.
 
+Live-email behavior
+-------------------
+Every 10 seconds by default, the service checks Gmail using GMAIL_QUERY.
+
+It only processes emails received after the FastAPI service starts running.
+
+If no new email is found, the terminal prints:
+
+    Checking Gmail for new emails...
+    Gmail check complete: 0 new email(s)
+
+Docker log output
+-----------------
+When a new email is found, the Docker output prints a JSON array using the same structure as the old gmailapi.py script:
+
+    [
+      {
+        "email_id": "email_001",
+        "from": "sender@example.com",
+        "subject": "Example subject",
+        "body": "Email body text...",
+        "attachments": [
+          "/app/data/BL&SI/email_001_file.xlsx"
+        ]
+      }
+    ]
+
 Important note about "automatic when email arrives"
 ---------------------------------------------------
 There are two ways to do this:
@@ -58,8 +85,6 @@ Docker run on PowerShell
 ------------------------
 Run this from the project folder:
 
-    docker stop gmail-listener 2>$null
-
     docker run --rm -p 8000:8000 `
     -v "${PWD}\credentials.json:/app/secrets/credentials.json:ro" `
     -v "${PWD}\token.json:/app/secrets/token.json" `
@@ -78,8 +103,8 @@ Run this from the project folder:
       -v "$PWD/credentials.json:/app/secrets/credentials.json:ro" \
       -v "$PWD/token.json:/app/secrets/token.json" \
       -v "$PWD/docker-data:/app/data" \
-      -e GMAIL_QUERY="category:primary" \
-      -e POLL_SECONDS=30 \
+      -e GMAIL_QUERY="category:primary is:unread" \
+      -e POLL_SECONDS=10 \
       --name gmail-listener \
       gmail-fastapi-listener
 
@@ -99,13 +124,13 @@ PROCESSED_FILE
 Default in Docker: /app/data/processed_emails.json
 
 GMAIL_QUERY
-Default: category:primary
+Default: category:primary is:unread
 
 POLL_SECONDS
-Default: 30
+Default: 10
 
 MAX_RESULTS
-Default: 10
+Default: 5
 
 
 Useful endpoints
