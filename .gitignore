@@ -3,6 +3,9 @@ credentials.json
 token.json
 *.env
 .env
+BL&SI/
+processed_emails.json
+docker-data/
 
 # Attachments / generated data
 attachments/
