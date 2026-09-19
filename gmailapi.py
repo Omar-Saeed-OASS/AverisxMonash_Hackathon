@@ -4,14 +4,22 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from db_manager import DBManager
+
+
+load_dotenv()
 
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
@@ -24,6 +32,21 @@ POLL_SECONDS = int(os.getenv("POLL_SECONDS", "10"))
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
 APP_STARTED_AT_MS = int(time.time() * 1000)
 EMAIL_SEQUENCE = 0
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "documents")
+
+
+DB_MANAGER: DBManager | None = None
+
+
+def get_db_manager() -> DBManager:
+    global DB_MANAGER
+
+    if DB_MANAGER is None:
+        DB_MANAGER = DBManager(SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET)
+
+    return DB_MANAGER
 
 
 def get_service():
@@ -57,6 +80,14 @@ def save_processed_ids(processed_ids: set[str]) -> None:
         json.dump(sorted(processed_ids), f, indent=2)
 
 
+async def load_processed_ids_async() -> set[str]:
+    return await asyncio.to_thread(load_processed_ids)
+
+
+async def save_processed_ids_async(processed_ids: set[str]) -> None:
+    await asyncio.to_thread(save_processed_ids, processed_ids)
+
+
 def decode_body(data: str) -> str:
     return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
 
@@ -81,9 +112,18 @@ def get_message_body(payload: dict[str, Any]) -> str:
     return ""
 
 
-def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_index: int) -> list[str]:
-    """Download attachment parts to disk and return their paths."""
-    saved_paths = []
+def guess_doc_type(filename: str) -> str | None:
+    name = filename.lower()
+    if "si" in name:
+        return "SI"
+    if "bl" in name or "b/l" in name:
+        return "BL"
+    return "Unknown"
+
+
+def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_index: int) -> list[dict[str, Any]]:
+    """Download attachment parts to disk and return metadata plus file bytes."""
+    attachments = []
     ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def walk_parts(parts):
@@ -102,7 +142,16 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
                 file_path = ATTACHMENTS_DIR / safe_name
                 with file_path.open("wb") as f:
                     f.write(file_data)
-                saved_paths.append(str(file_path))
+                attachments.append(
+                    {
+                        "filename": filename,
+                        "local_path": str(file_path),
+                        "content": file_data,
+                        "content_type": part.get("mimeType") or "application/octet-stream",
+                        "file_format": Path(filename).suffix.lstrip(".").lower() or None,
+                        "doc_type": guess_doc_type(filename),
+                    }
+                )
 
             if "parts" in part:
                 walk_parts(part["parts"])
@@ -110,20 +159,58 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
     if "parts" in payload:
         walk_parts(payload["parts"])
 
-    return saved_paths
+    return attachments
 
 
 def get_message(service, msg_id: str, email_index: int) -> dict[str, Any]:
     full = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
     headers = {h["name"]: h["value"] for h in full["payload"]["headers"]}
+    from_name, from_email = parseaddr(headers.get("From", ""))
+    received_at = datetime.fromtimestamp(
+        int(full.get("internalDate", "0")) / 1000,
+        tz=timezone.utc,
+    ).isoformat()
 
     return {
         "email_id": f"email_{email_index:03d}",
-        "from": headers.get("From", ""),
+        "from_name": from_name,
+        "from_email": from_email,
+        "received_at": received_at,
         "subject": headers.get("Subject", ""),
         "body": get_message_body(full["payload"]),
+        "raw_payload": full,
         "attachments": extract_attachments(service, msg_id, full["payload"], email_index),
     }
+
+
+async def get_message_async(service, msg_id: str, email_index: int) -> dict[str, Any]:
+    return await asyncio.to_thread(get_message, service, msg_id, email_index)
+
+
+def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
+    output = {
+        key: value
+        for key, value in email_data.items()
+        if key not in {"raw_payload", "attachments"}
+    }
+    if not email_data["attachments"]:
+        output["attachment_record"] = None
+        return output
+
+    output["attachment_record"] = {
+        "id": email_data["attachments"][0].get("attachment_record_id"),
+        "doc_type": [attachment["doc_type"] for attachment in email_data["attachments"]],
+        "storage_path": [attachment.get("storage_path") for attachment in email_data["attachments"]],
+        "file_format": [attachment.get("file_format") for attachment in email_data["attachments"]],
+        "files": [
+            {
+                "filename": attachment["filename"],
+                "local_path": attachment["local_path"],
+            }
+            for attachment in email_data["attachments"]
+        ],
+    }
+    return output
 
 
 def list_messages(service, query: str = "", max_results: int = 5) -> list[dict[str, str]]:
@@ -131,6 +218,10 @@ def list_messages(service, query: str = "", max_results: int = 5) -> list[dict[s
         userId="me", q=query, maxResults=max_results
     ).execute()
     return results.get("messages", [])
+
+
+async def list_messages_async(service, query: str = "", max_results: int = 5) -> list[dict[str, str]]:
+    return await asyncio.to_thread(list_messages, service, query, max_results)
 
 
 def get_message_internal_date(service, msg_id: str) -> int:
@@ -143,7 +234,11 @@ def get_message_internal_date(service, msg_id: str) -> int:
     return int(metadata.get("internalDate", "0"))
 
 
-def handle_email(email_data: dict[str, Any]) -> None:
+async def get_message_internal_date_async(service, msg_id: str) -> int:
+    return await asyncio.to_thread(get_message_internal_date, service, msg_id)
+
+
+async def handle_email(email_data: dict[str, Any]) -> None:
     """
     This function is called automatically for every new email found by the app.
     Put your processing logic here, such as reading Excel attachments or calling AI.
@@ -155,9 +250,9 @@ def handle_email(email_data: dict[str, Any]) -> None:
 async def check_for_new_emails() -> list[dict[str, Any]]:
     global EMAIL_SEQUENCE
 
-    service = get_service()
-    processed_ids = load_processed_ids()
-    messages = list_messages(service, query=GMAIL_QUERY, max_results=MAX_RESULTS)
+    service = await asyncio.to_thread(get_service)
+    processed_ids = await load_processed_ids_async()
+    messages = await list_messages_async(service, query=GMAIL_QUERY, max_results=MAX_RESULTS)
     new_emails = []
     processed_ids_changed = False
 
@@ -166,20 +261,21 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
         if msg_id in processed_ids:
             continue
 
-        if get_message_internal_date(service, msg_id) <= APP_STARTED_AT_MS:
+        if await get_message_internal_date_async(service, msg_id) <= APP_STARTED_AT_MS:
             processed_ids.add(msg_id)
             processed_ids_changed = True
             continue
 
         EMAIL_SEQUENCE += 1
-        email_data = get_message(service, msg_id, EMAIL_SEQUENCE)
-        handle_email(email_data)
+        email_data = await get_message_async(service, msg_id, EMAIL_SEQUENCE)
+        await handle_email(email_data)
+        await get_db_manager().save_email(email_data)
         processed_ids.add(msg_id)
         processed_ids_changed = True
-        new_emails.append(email_data)
+        new_emails.append(serialize_email_for_output(email_data))
 
     if processed_ids_changed:
-        save_processed_ids(processed_ids)
+        await save_processed_ids_async(processed_ids)
 
     return new_emails
 

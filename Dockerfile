@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY gmailapi.py .
+COPY gmailapi.py db_manager.py ./
 
 ENV GMAIL_CREDENTIALS_FILE=/app/secrets/credentials.json
 ENV GMAIL_TOKEN_FILE=/app/secrets/token.json

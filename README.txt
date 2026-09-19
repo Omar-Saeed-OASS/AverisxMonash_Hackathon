@@ -29,12 +29,29 @@ When a new email is found, the Docker output prints a JSON array using the same 
     [
       {
         "email_id": "email_001",
-        "from": "sender@example.com",
+        "from_name": "Sender Name",
+        "from_email": "sender@example.com",
         "subject": "Example subject",
         "body": "Email body text...",
-        "attachments": [
-          "/app/data/BL&SI/email_001_file.xlsx"
-        ]
+        "attachment_record": {
+          "id": "attachment-uuid",
+          "doc_type": ["SI", "BL"],
+          "storage_path": [
+            "attachment-uuid/email_001_SI.xlsx",
+            "attachment-uuid/email_001_BL.doc"
+          ],
+          "file_format": ["xlsx", "doc"],
+          "files": [
+            {
+              "filename": "SI.xlsx",
+              "local_path": "/app/data/BL&SI/email_001_SI.xlsx"
+            },
+            {
+              "filename": "BL.doc",
+              "local_path": "/app/data/BL&SI/email_001_BL.doc"
+            }
+          ]
+        }
       }
     ]
 
@@ -86,6 +103,7 @@ Docker run on PowerShell
 Run this from the project folder:
 
     docker run --rm -p 8000:8000 `
+    --env-file .env `
     -v "${PWD}\credentials.json:/app/secrets/credentials.json:ro" `
     -v "${PWD}\token.json:/app/secrets/token.json" `
     -v "${PWD}\docker-data:/app/data" `
@@ -100,6 +118,7 @@ Docker run on macOS/Linux
 Run this from the project folder:
 
     docker run --rm -p 8000:8000 \
+      --env-file .env \
       -v "$PWD/credentials.json:/app/secrets/credentials.json:ro" \
       -v "$PWD/token.json:/app/secrets/token.json" \
       -v "$PWD/docker-data:/app/data" \
@@ -131,6 +150,18 @@ Default: 10
 
 MAX_RESULTS
 Default: 5
+
+SUPABASE_URL
+Required for database inserts and Storage uploads.
+
+SUPABASE_SECRET_KEY
+Required for server-side inserts and Storage uploads.
+
+SUPABASE_BUCKET
+Default: documents
+
+Supabase table note
+doc_type, storage_path, and file_format in the attachments table must be JSONB because one attachments row stores arrays for the email's whole document set.
 
 
 Useful endpoints
