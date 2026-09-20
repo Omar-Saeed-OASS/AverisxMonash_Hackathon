@@ -13,10 +13,18 @@ class EmailRouterSchema(BaseModel):
 
 
 class ShipmentExtractionSchema(BaseModel):
-    shipper: Optional[str] = Field(description="Name of the shipper. Null if missing.")
-    consignee: Optional[str] = Field(description="Name of the consignee. Null if missing.")
-    notify_party: Optional[str] = Field(description="Name of the notify party. Null if missing.")
-    port_of_loading: Optional[str] = Field(description="The origin port of loading. Null if missing.")
-    port_of_discharge: Optional[str] = Field(description="The destination port of discharge. Null if missing.")
-    container_count: Optional[int] = Field(description="The total number of containers as an integer. Null if missing.")
-    gross_weight_kg: Optional[float] = Field(description="The gross weight converted strictly to kilograms. Null if missing.")
+    is_valid_doc: bool = Field(
+        description="True if document is a Bill of Lading (BL) or Shipping Instruction (SI). False if it is a Commercial Invoice, Packing List, or Certificate of Origin."
+    )
+    shipper: Optional[str] = Field(description="Name of the shipper. Null if missing, '???', 'TBA', or '_______'.")
+    consignee: Optional[str] = Field(
+        description="Name of the consignee. Null if missing, '???', 'TBA', or '_______'.")
+    notify_party: Optional[str] = Field(
+        description="Name of the notify party. Null if missing, '???', 'TBA', or '_______'.")
+    port_of_loading: Optional[str] = Field(description="Origin port. Null if missing, '???', 'TBA', or '_______'.")
+    port_of_discharge: Optional[str] = Field(
+        description="Destination port. Null if missing, '???', 'TBA', or '_______'.")
+    container_count: Optional[int] = Field(
+        description="Total number of containers as an integer. Null if missing, '???', 'TBA', or '_______'.")
+    gross_weight_kg: Optional[float] = Field(
+        description="Gross weight. Null if missing, '???', 'TBA', or '_______'.")

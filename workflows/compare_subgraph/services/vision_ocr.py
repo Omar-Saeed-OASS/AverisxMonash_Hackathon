@@ -5,6 +5,7 @@ import logging
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+from prompts import vision_ocr_prompt
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -42,12 +43,7 @@ async def transcribe_scanned_pdf(file_bytes: bytes) -> dict:
             prompt_content = [
                 {
                     "type": "text",
-                    "text": (
-                        "You are a strict document transcription engine. "
-                        "Convert the text and tables in this image into clean Markdown. "
-                        "Preserve all structural layouts, column headers, and data grids exactly. "
-                        "Do not add conversational filler."
-                    )
+                    "text": vision_ocr_prompt
                 },
                 {
                     "type": "image_url",
@@ -60,7 +56,15 @@ async def transcribe_scanned_pdf(file_bytes: bytes) -> dict:
             # API Call with exception handling
             try:
                 response = await llm.ainvoke([message])
-                markdown_pages.append(f"### Page {page_num + 1}\n\n{response.content[0].get("text", "")}\n")
+
+                # Safely extract text whether Langchain returns a list or a string
+                if isinstance(response.content, list) and len(response.content) > 0:
+                    page_text = response.content[0].get('text', '')
+                else:
+                    page_text = str(response.content)
+
+                markdown_pages.append(f"### Page {page_num + 1}\n\n{page_text.strip()}\n")
+
             except (ResourceExhausted, DeadlineExceeded) as network_err:
                 doc.close()
                 return {"content": "", "error": f"API Quota/Timeout: {str(network_err)}"}
