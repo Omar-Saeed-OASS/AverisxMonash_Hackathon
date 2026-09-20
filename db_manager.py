@@ -18,9 +18,10 @@ class DBManager:
 
     def _save_email_sync(self, email_data: dict[str, Any]) -> None:
         email_uuid = str(uuid.uuid4())
-        attachment_uuid = str(uuid.uuid4()) if email_data["attachments"] else None
+        attachments = email_data["attachments"]
+        attachment_uuid = str(uuid.uuid4()) if attachments else None
 
-        for attachment in email_data["attachments"]:
+        for attachment in attachments:
             storage_path = f"{attachment_uuid}/{attachment['filename']}"
             self.client.storage.from_(self.bucket).upload(
                 storage_path,
@@ -40,19 +41,23 @@ class DBManager:
                 "sender": email_data["from_name"],
                 "received_at": email_data["received_at"],
                 "raw_payload": email_data["raw_payload"],
-                "attached_docs": len(email_data["attachments"]) > 0,
+                "attached_docs": bool(attachments),
             }
         ).execute()
 
-        if not email_data["attachments"]:
+        if not attachments:
             return
 
         self.client.table("attachments").insert(
             {
                 "id": attachment_uuid,
                 "email_id": email_uuid,
-                "doc_type": [attachment["doc_type"] for attachment in email_data["attachments"]],
-                "storage_path": [attachment["storage_path"] for attachment in email_data["attachments"]],
-                "file_format": [attachment["file_format"] for attachment in email_data["attachments"]],
+                "doc_type": [attachment["doc_type"] for attachment in attachments],
+                "storage_path": [attachment["storage_path"] for attachment in attachments],
+                "file_format": [attachment["file_format"] for attachment in attachments],
+                "is_corrupted": any(
+                    attachment.get("validation_status") != "valid"
+                    for attachment in attachments
+                ),
             }
         ).execute()

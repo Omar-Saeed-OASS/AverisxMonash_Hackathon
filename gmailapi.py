@@ -1,8 +1,11 @@
 import asyncio
 import base64
+import binascii
+import io
 import json
 import os
 import time
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from email.utils import parseaddr
@@ -35,6 +38,19 @@ EMAIL_SEQUENCE = 0
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "documents")
+
+SUPPORTED_FILE_FORMATS = {
+    "csv",
+    "doc",
+    "docx",
+    "jpeg",
+    "jpg",
+    "pdf",
+    "png",
+    "txt",
+    "xls",
+    "xlsx",
+}
 
 
 DB_MANAGER: DBManager | None = None
@@ -121,6 +137,86 @@ def guess_doc_type(filename: str) -> str | None:
     return "Unknown"
 
 
+def is_corrupted(filename: str, raw_base64: str) -> bool:
+    """Return whether a Gmail attachment payload is invalid or unsupported."""
+    file_format = Path(filename).suffix.lstrip(".").lower()
+    if not file_format or file_format not in SUPPORTED_FILE_FORMATS:
+        return True
+
+    if not raw_base64:
+        return True
+
+    try:
+        padded = raw_base64 + "=" * (-len(raw_base64) % 4)
+        file_data = base64.b64decode(
+            padded.translate(str.maketrans("-_", "+/")),
+            validate=True,
+        )
+    except (binascii.Error, ValueError):
+        return True
+
+    if not file_data:
+        return True
+
+    try:
+        if file_format == "pdf":
+            return not (file_data.startswith(b"%PDF-") and b"%%EOF" in file_data[-1024:])
+        elif file_format in {"docx", "xlsx"}:
+            required_member = "word/document.xml" if file_format == "docx" else "xl/workbook.xml"
+            with zipfile.ZipFile(io.BytesIO(file_data)) as archive:
+                return archive.testzip() is not None or required_member not in archive.namelist()
+        elif file_format in {"doc", "xls"}:
+            return len(file_data) < 512 or not file_data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+        elif file_format == "png":
+            return not file_data.startswith(b"\x89PNG\r\n\x1a\n")
+        elif file_format in {"jpg", "jpeg"}:
+            return not (file_data.startswith(b"\xff\xd8\xff") and file_data.endswith(b"\xff\xd9"))
+        elif file_format in {"txt", "csv"}:
+            file_data.decode("utf-8")
+            return False
+    except (UnicodeDecodeError, zipfile.BadZipFile, NotImplementedError, OSError, ValueError):
+        return True
+
+    return False
+
+
+def validate_attachment(filename: str, file_data: bytes) -> tuple[str, str | None]:
+    """Return a validation status and a reason suitable for logs and review."""
+    if not file_data:
+        return "corrupted", "empty_file"
+
+    file_format = Path(filename).suffix.lstrip(".").lower()
+    if not file_format or file_format not in SUPPORTED_FILE_FORMATS:
+        return "unknown", "unsupported_or_missing_extension"
+
+    try:
+        if file_format == "pdf":
+            if not file_data.startswith(b"%PDF-") or b"%%EOF" not in file_data[-1024:]:
+                return "corrupted", "invalid_pdf_signature_or_eof"
+        elif file_format in {"docx", "xlsx"}:
+            required_member = (
+                "word/document.xml" if file_format == "docx" else "xl/workbook.xml"
+            )
+            with zipfile.ZipFile(io.BytesIO(file_data)) as archive:
+                if archive.testzip() is not None or required_member not in archive.namelist():
+                    return "corrupted", "invalid_office_archive"
+        elif file_format in {"doc", "xls"}:
+            if not file_data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+                return "corrupted", "invalid_legacy_office_signature"
+        elif file_format == "png":
+            if not file_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                return "corrupted", "invalid_png_signature"
+        elif file_format in {"jpg", "jpeg"}:
+            if not file_data.startswith(b"\xff\xd8\xff") or not file_data.endswith(b"\xff\xd9"):
+                return "corrupted", "invalid_jpeg_signature"
+        elif file_format in {"txt", "csv"}:
+            file_data.decode("utf-8")
+    except (UnicodeDecodeError, zipfile.BadZipFile, OSError, ValueError):
+        return "unreadable", "file_cannot_be_parsed"
+
+    return "valid", None
+
+
 def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_index: int) -> list[dict[str, Any]]:
     """Download attachment parts to disk and return metadata plus file bytes."""
     attachments = []
@@ -136,9 +232,25 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
                 att = service.users().messages().attachments().get(
                     userId="me", messageId=msg_id, id=att_id
                 ).execute()
-                file_data = base64.urlsafe_b64decode(att["data"])
+                raw_base64 = att.get("data") or ""
+                payload_is_corrupted = is_corrupted(filename, raw_base64)
+                try:
+                    padded = raw_base64 + "=" * (-len(raw_base64) % 4)
+                    file_data = base64.b64decode(
+                        padded.translate(str.maketrans("-_", "+/")),
+                        validate=True,
+                    )
+                    validation_status, validation_reason = validate_attachment(filename, file_data)
+                    if payload_is_corrupted and validation_status == "valid":
+                        validation_status = "corrupted"
+                        validation_reason = "invalid_attachment"
+                except (binascii.Error, ValueError, TypeError):
+                    file_data = b""
+                    validation_status = "unreadable"
+                    validation_reason = "invalid_base64_data"
 
-                safe_name = f"email_{email_index:03d}_{filename}"
+                safe_filename = Path(filename).name or "attachment.bin"
+                safe_name = f"email_{email_index:03d}_{safe_filename}"
                 file_path = ATTACHMENTS_DIR / safe_name
                 with file_path.open("wb") as f:
                     f.write(file_data)
@@ -150,6 +262,8 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
                         "content_type": part.get("mimeType") or "application/octet-stream",
                         "file_format": Path(filename).suffix.lstrip(".").lower() or None,
                         "doc_type": guess_doc_type(filename),
+                        "validation_status": validation_status,
+                        "validation_reason": validation_reason,
                     }
                 )
 
@@ -206,6 +320,8 @@ def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
             {
                 "filename": attachment["filename"],
                 "local_path": attachment["local_path"],
+                "validation_status": attachment["validation_status"],
+                "validation_reason": attachment["validation_reason"],
             }
             for attachment in email_data["attachments"]
         ],
