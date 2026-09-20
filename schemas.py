@@ -26,5 +26,11 @@ class ShipmentExtractionSchema(BaseModel):
         description="Destination port. Null if missing, '???', 'TBA', or '_______'.")
     container_count: Optional[int] = Field(
         description="Total number of containers as an integer. Null if missing, '???', 'TBA', or '_______'.")
-    gross_weight_kg: Optional[float] = Field(
-        description="Gross weight. Null if missing, '???', 'TBA', or '_______'.")
+
+    # Used to normalize the weight
+    raw_weight_value: Optional[float] = Field(
+        description="The numerical value of the gross weight exactly as written. Null if missing or '???'."
+    )
+    raw_weight_unit: Optional[str] = Field(
+        description="The exact text of the unit of measurement (e.g., 'MT', 'KGS', 'LBS', 'Tonnes'). Null if missing."
+    )

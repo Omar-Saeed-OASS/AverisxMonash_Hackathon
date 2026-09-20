@@ -56,3 +56,4 @@ async def extract_shipment_data(document_text: str) -> dict:
         logging.error(f"Unexpected extraction error: {e}")
         return {"data": None, "error": f"Extraction failed: {str(e)}"}
 
+
