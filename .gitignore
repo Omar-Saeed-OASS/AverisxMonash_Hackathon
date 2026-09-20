@@ -48,3 +48,5 @@ htmlcov/
 
 
 test_docs/
+.log
+test.py

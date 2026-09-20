@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -8,17 +9,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core.exceptions import GoogleAPIError
 from dotenv import load_dotenv
 
-from vision_ocr import transcribe_scanned_pdf
-from file_ingestion import ingest_document
-
 load_dotenv()
 
 
-
-# Async Extraction Service (Direct Invocation)
 async def extract_shipment_data(document_text: str) -> dict:
     """
-    Extracts the 7 required fields from document text using Gemini 1.5 Flash.
+    Extracts the 7 + 1 (raw weight unit) required fields from document text using Gemini 1.5 Flash.
     Uses explicit message passing rather than LangChain pipes.
 
     Returns:
