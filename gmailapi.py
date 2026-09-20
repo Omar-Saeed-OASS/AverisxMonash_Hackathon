@@ -20,6 +20,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from db_manager import DBManager
+from workflows.spam_subgraph.spam_nodes import prepare_spam_email
 
 
 load_dotenv()
@@ -354,13 +355,38 @@ async def get_message_internal_date_async(service, msg_id: str) -> int:
     return await asyncio.to_thread(get_message_internal_date, service, msg_id)
 
 
+def get_message_sender(service, msg_id: str) -> tuple[str, str]:
+    metadata = service.users().messages().get(
+        userId="me",
+        id=msg_id,
+        format="metadata",
+        metadataHeaders=["From"],
+    ).execute()
+    headers = {header["name"]: header["value"] for header in metadata["payload"].get("headers", [])}
+    return parseaddr(headers.get("From", ""))
+
+
+async def get_message_sender_async(service, msg_id: str) -> tuple[str, str]:
+    return await asyncio.to_thread(get_message_sender, service, msg_id)
+
+
 async def handle_email(email_data: dict[str, Any]) -> None:
     """
     This function is called automatically for every new email found by the app.
     Put your processing logic here, such as reading Excel attachments or calling AI.
     """
-    # Add your workflow here. The structured Docker log is printed after polling.
-    pass
+    if email_data.get("category") != "SPAM":
+        return
+
+    db_manager = get_db_manager()
+    reputation = await db_manager.get_sender_reputation(email_data["from_email"])
+    spam_result = await prepare_spam_email({**email_data, **reputation})
+    email_data.update(spam_result)
+
+    if spam_result.get("is_spam"):
+        reputation_update = await db_manager.record_spam_decision(email_data)
+        email_data.update(reputation_update)
+        email_data["spam_action"] = "reject" if email_data["is_blacklisted"] else "quarantine"
 
 
 async def check_for_new_emails() -> list[dict[str, Any]]:
@@ -382,10 +408,30 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
             processed_ids_changed = True
             continue
 
+        db_manager = get_db_manager()
+        sender_name, sender_email = await get_message_sender_async(service, msg_id)
+        if await db_manager.is_sender_blacklisted(sender_email):
+            print(
+                f"Rejected blacklisted email from {sender_email} (Gmail message {msg_id})",
+                flush=True,
+            )
+            processed_ids.add(msg_id)
+            processed_ids_changed = True
+            new_emails.append(
+                {
+                    "email_id": msg_id,
+                    "from_name": sender_name,
+                    "from_email": sender_email,
+                    "is_blacklisted": True,
+                    "spam_action": "reject",
+                }
+            )
+            continue
+
         EMAIL_SEQUENCE += 1
         email_data = await get_message_async(service, msg_id, EMAIL_SEQUENCE)
         await handle_email(email_data)
-        await get_db_manager().save_email(email_data)
+        await db_manager.save_email(email_data)
         processed_ids.add(msg_id)
         processed_ids_changed = True
         new_emails.append(serialize_email_for_output(email_data))
