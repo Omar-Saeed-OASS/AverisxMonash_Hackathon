@@ -45,3 +45,6 @@ htmlcov/
 
 # Environment-specific
 *.sqlite3
+
+
+test_docs/
