@@ -1,0 +1,14 @@
+.git
+.env
+*.env
+credentials.json
+credential.json
+token.json
+processed_emails.json
+BL&SI/
+attachments/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
