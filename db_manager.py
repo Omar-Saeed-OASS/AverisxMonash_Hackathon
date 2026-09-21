@@ -1,17 +1,42 @@
+import os
 import asyncio
 import uuid
 from typing import Any
-
 from supabase import create_client
+from dotenv import load_dotenv
+import logging
+
+load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class DBManager:
-    def __init__(self, url: str | None, key: str | None, bucket: str) -> None:
+    def __init__(self) -> None:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
         if not url or not key:
             raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY in environment.")
 
         self.client = create_client(url, key)
-        self.bucket = bucket
+        self.bucket = os.getenv("SUPABASE_ATTACHMENTS_BUCKET")
+
+    def download_sync(self, bucket: str, filepath: str) -> bytes:
+        """Synchronous call to Supabase storage."""
+        return self.client.storage.from_(bucket).download(filepath)
+
+    async def download_file_bytes(self, bucket: str, filepath: str) -> bytes:
+        """
+        Asynchronously downloads a file from Supabase storage into memory.
+        """
+        try:
+            # Offloads the blocking network call to a background thread
+            file_bytes = await asyncio.to_thread(self.download_sync, bucket, filepath)
+            return file_bytes
+
+        except Exception as e:
+            logging.error(f"Failed to download {filepath} from {bucket}: {e}")
+            raise
 
     async def save_email(self, email_data: dict[str, Any]) -> None:
         await asyncio.to_thread(self._save_email_sync, email_data)

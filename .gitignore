@@ -48,3 +48,9 @@ htmlcov/
 
 # Environment-specific
 *.sqlite3
+
+
+test_docs/
+.log
+test.py
+vertex_key.json
