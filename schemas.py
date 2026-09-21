@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 
 
 class EmailRouterSchema(BaseModel):
@@ -33,4 +33,20 @@ class ShipmentExtractionSchema(BaseModel):
     )
     raw_weight_unit: Optional[str] = Field(
         description="The exact text of the unit of measurement (e.g., 'MT', 'KGS', 'LBS', 'Tonnes'). Null if missing."
+    )
+
+
+# The Enterprise Risk Schema
+class RiskReportSchema(BaseModel):
+    overall_risk_level: str = Field(
+        description="Must be exactly 'CRITICAL', 'HIGH', 'MEDIUM', or 'LOW'."
+    )
+    compliance_flags: List[str] = Field(
+        description="List of specific regulations violated (e.g., 'SOLAS VGM Overweight', 'UCP 600 Mismatch', 'Malaysia JLM MSN 02/2016', 'Customs Fraud'). Empty if none."
+    )
+    financial_and_safety_impact: str = Field(
+        description="A 2-3 sentence explanation of the financial and physical risks (e.g., Letter of Credit rejection, Demurrage fees, crane collapse risk, loading prohibited)."
+    )
+    recommended_action: str = Field(
+        description="Specific actionable step for the logistics operator (e.g., 'Repack container to meet 24,000 KG limit', 'Amend BL to match SI Consignee')."
     )

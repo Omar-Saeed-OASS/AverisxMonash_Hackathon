@@ -1,8 +1,7 @@
 {
   "dependencies": ["."],
-  "python_path": ".",
   "graphs": {
-    "graph": "orchestrator.graph:graph"
+    "graph": "workflows.compare_subgraph.compare_subgraph:compare_subgraph"
   },
   "env": ".env"
 }

@@ -1,30 +1,18 @@
 from typing import Literal
 from langgraph.graph import END
-from compare_state import CompareState
+from .compare_state import CompareState
 
-def route_preflight(state: CompareState) -> Literal["file_read_node", "__end__"]:
-    """
-    Checks if the preflight node flagged a missing attachment error.
-    If so, terminates the graph early. Otherwise, proceeds to read the files.
-    """
+def route_preflight(state: CompareState) -> Literal["file_read_node", "db_save_node"]:
     if state.get("status") == "NEEDS_REVIEW":
-        return END
+        return "db_save_node"
     return "file_read_node"
 
-def route_file_read(state: CompareState) -> Literal["extractor_node", "__end__"]:
-    """
-    Checks if the file read node flagged an unreadable or corrupted file.
-    If so, terminates the graph early. Otherwise, proceeds to extraction.
-    """
+def route_file_read(state: CompareState) -> Literal["extractor_node", "db_save_node"]:
     if state.get("status") == "NEEDS_REVIEW":
-        return END
+        return "db_save_node"
     return "extractor_node"
 
-def route_extractor(state: CompareState) -> Literal["normalize_node", "__end__"]:
-    """
-    Checks if the extractor node flagged a wrong document type or missing values.
-    If so, terminates the graph early. Otherwise, proceeds to normalization.
-    """
+def route_extractor(state: CompareState) -> Literal["normalize_node", "db_save_node"]:
     if state.get("status") == "NEEDS_REVIEW":
-        return END
+        return "db_save_node"
     return "normalize_node"

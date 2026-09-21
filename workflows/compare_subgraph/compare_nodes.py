@@ -2,17 +2,14 @@ import asyncio
 import logging
 from typing import Dict, Any
 from langchain_core.runnables.config import RunnableConfig
-
-# --- Existing Services ---
-from services.file_ingestion import ingest_document
-from services.extractor import extract_shipment_data
-from services.vision_ocr import transcribe_scanned_pdf
-from database_manager import DBManager
-
-# --- Services to Implement Next ---
-from services.normalizer import normalize_extracted_data
-from services.comparator import compare_documents
-# from services.intelligence_layer import generate_risk_report
+from .services.file_ingestion import ingest_document
+from .services.extractor import extract_shipment_data
+from .services.vision_ocr import transcribe_scanned_pdf
+from .services.normalizer import normalize_extracted_data
+from .services.comparator import compare_documents
+from db_manager import DBManager
+from .compare_state import CompareState
+from .services.intelligence_layer import generate_risk_report
 
 logger = logging.getLogger(__name__)
 db_manager = DBManager()
@@ -160,7 +157,6 @@ async def compare_node(state: CompareState, config: RunnableConfig) -> Dict[str,
     Updates the final MISMATCH / OK status.
     """
 
-    # comparator.py will handle RapidFuzz token sorting and exact match checks
     result = compare_documents(
         state.get("si_extracted", {}),
         state.get("bl_extracted", {})
@@ -173,15 +169,38 @@ async def compare_node(state: CompareState, config: RunnableConfig) -> Dict[str,
         "discrepancy_details": result.get("discrepancy_details", [])
     }
 
+
 async def intelligence_node(state: CompareState, config: RunnableConfig) -> Dict[str, Any]:
     """
-    Asynchronous enterprise capabilities: HS Codes, compliance flags,
-    and predictive tariffs applied to the final BL data.
+    Evaluates global compliance, physical vessel safety (SOLAS VGM), and
+    trade finance clearance (UCP 600) on the extracted shipment data.
     """
-    pass
+    # Safe unpacking whether data is a dictionary or a Pydantic model
+    bl_extracted = state.get("bl_extracted") or {}
+    bl_dict = bl_extracted.model_dump() if hasattr(bl_extracted, "model_dump") else bl_extracted
 
-#     risk_report = await generate_risk_report(state.get("bl_extracted", {}))
-#
-#     return {
-#         "enterprise_risk_report": risk_report
-#     }
+    discrepancies = state.get("discrepancy_details") or []
+
+    # Generate compliance evaluation
+    risk_report = await generate_risk_report(
+        discrepancy_details=discrepancies,
+        bl_data=bl_dict
+    )
+
+    return {
+        "enterprise_risk_report": risk_report
+    }
+
+
+async def db_save_node(state: CompareState, config: RunnableConfig) -> Dict[str, Any]:
+    """
+    The final sink node. Pushes the current state to Supabase regardless
+    of whether the graph succeeded or terminated early with an error.
+    """
+    email_id = state.get("email_id")
+    if email_id:
+        # Pass the full Pydantic/TypedDict state down to your db manager
+        await db_manager.update_email_results(email_id, state)
+
+    # Return an empty dict because it is not changing the state, just saving it.
+    return {}

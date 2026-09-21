@@ -9,7 +9,6 @@ import logging
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-
 class DBManager:
     def __init__(self) -> None:
         url = os.getenv("SUPABASE_URL")
@@ -134,3 +133,36 @@ class DBManager:
                 ),
             }
         ).execute()
+
+    async def update_email_results(self, email_id: str, final_state: dict[str, Any]) -> None:
+        """
+        Pushes the final LangGraph state back to the emails table.
+        """
+        await asyncio.to_thread(self.update_email_results_sync, email_id, final_state)
+
+    def update_email_results_sync(self, email_id: str, state: dict[str, Any]) -> None:
+        # Map state keys directly to your database columns
+        update_data = {
+            "status": state.get("status"),
+            "has_defect": state.get("has_defect"),
+            "defect_fields": state.get("defect_fields"),
+            "review_reason": state.get("review_reason"),
+            "si_extracted": state.get("si_extracted"),
+            "bl_extracted": state.get("bl_extracted"),
+            "enterprise_risk_report": state.get("enterprise_risk_report"),  # Your new column
+            "updated_at": "now()"
+        }
+
+        # Drop any keys that are None (e.g., if the graph terminated early)
+        update_data = {key: value for key, value in update_data.items() if value is not None}
+
+        # Optional: Pack any miscellaneous custom data into metadata just in case
+        if "discrepancy_details" in state:
+            update_data["metadata"] = {"discrepancy_details": state.get("discrepancy_details")}
+
+        # Execute the update
+        try:
+            self.client.table("emails").update(update_data).eq("email_id", email_id).execute()
+        except Exception as e:
+            logger.error(f"Failed to update database for email {email_id}: {e}")
+            raise
