@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
+from unittest import result
 
 from fastapi import FastAPI
 from dotenv import load_dotenv
@@ -172,7 +173,7 @@ def get_message(service, msg_id: str, email_index: int) -> dict[str, Any]:
     ).isoformat()
 
     return {
-        "email_id": f"email_{email_index:03d}",
+        "email_id": from_email,
         "from_name": from_name,
         "from_email": from_email,
         "received_at": received_at,
@@ -238,13 +239,24 @@ async def get_message_internal_date_async(service, msg_id: str) -> int:
     return await asyncio.to_thread(get_message_internal_date, service, msg_id)
 
 
+from graph import graph
 async def handle_email(email_data: dict[str, Any]) -> None:
-    """
-    This function is called automatically for every new email found by the app.
-    Put your processing logic here, such as reading Excel attachments or calling AI.
-    """
-    # Add your workflow here. The structured Docker log is printed after polling.
-    pass
+
+    result = graph.invoke(
+        {
+            "email_id": email_data["from_email"],
+            "sender_email": email_data["from_email"],
+            "subject": email_data["subject"],
+            "body": email_data["body"],
+            "attachments": email_data["attachments"],
+        }
+    )
+
+    email_data["category"] = result.get("category")
+    email_data["reasoning"] = result.get("reasoning")
+
+    print("Category:", email_data["category"])
+    print("Reasoning:", email_data["reasoning"])
 
 
 async def check_for_new_emails() -> list[dict[str, Any]]:
