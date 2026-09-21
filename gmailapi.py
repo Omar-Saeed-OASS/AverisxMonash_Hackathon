@@ -20,7 +20,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from db_manager import DBManager
-from workflows.spam_subgraph.spam_nodes import prepare_spam_email
+from graph import route_email
+from workflows.classify_and_route_llm import classify_email
 
 
 load_dotenv()
@@ -303,10 +304,24 @@ async def get_message_async(service, msg_id: str, email_index: int) -> dict[str,
 
 
 def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
+    base_fields = (
+        "email_id", "from_name", "from_email", "received_at", "subject", "body",
+        "category", "routing_reasoning",
+    )
+    general_fields = (
+        "summary", "key_points", "action_items", "requires_response", "suggested_reply",
+        "confidence",
+    )
+    spam_fields = (
+        "spam_score", "is_spam", "spam_reasons", "risk_signals", "recommended_action",
+        "spam_reason", "confidence", "spam_count", "is_blacklisted", "blacklist_status",
+        "spam_action",
+    )
+    category_fields = spam_fields if email_data.get("category") == "SPAM" else general_fields
     output = {
-        key: value
-        for key, value in email_data.items()
-        if key not in {"raw_payload", "attachments"}
+        key: email_data[key]
+        for key in (*base_fields, *category_fields)
+        if key in email_data
     }
     if not email_data["attachments"]:
         output["attachment_record"] = None
@@ -375,15 +390,21 @@ async def handle_email(email_data: dict[str, Any]) -> None:
     This function is called automatically for every new email found by the app.
     Put your processing logic here, such as reading Excel attachments or calling AI.
     """
+    classification = await classify_email(email_data)
+    spam_context: dict[str, Any] = {}
+    if classification.get("category") == "SPAM":
+        spam_context = await get_db_manager().get_sender_reputation(email_data["from_email"])
+    routed_email = await route_email(
+        email_data,
+        spam_context=spam_context,
+        classification=classification,
+    )
+    email_data.update(routed_email)
     if email_data.get("category") != "SPAM":
         return
 
-    db_manager = get_db_manager()
-    reputation = await db_manager.get_sender_reputation(email_data["from_email"])
-    spam_result = await prepare_spam_email({**email_data, **reputation})
-    email_data.update(spam_result)
-
-    if spam_result.get("is_spam"):
+    if email_data.get("is_spam"):
+        db_manager = get_db_manager()
         reputation_update = await db_manager.record_spam_decision(email_data)
         email_data.update(reputation_update)
         email_data["spam_action"] = "reject" if email_data["is_blacklisted"] else "quarantine"

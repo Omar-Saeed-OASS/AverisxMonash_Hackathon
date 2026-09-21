@@ -48,15 +48,8 @@ def _fallback_analysis(state: GeneralEmailState) -> dict[str, Any]:
         "key_points": "; ".join(sentences[:5]) or (f"Subject: {subject}" if subject else "None identified"),
         "action_items": "; ".join(action_items) or "None identified",
         "requires_response": "Yes" if action_items else "No",
-        "priority": "medium" if action_items else "low",
-        "sentiment": "neutral",
-        "language": "unknown",
-        "entities": "None identified",
-        "deadlines": "None identified",
-        "risks": "None identified",
         "suggested_reply": "",
         "confidence": 0.35,
-        "analysis_source": "local_fallback",
     }
 
 
@@ -86,20 +79,13 @@ def _gemini_analysis(state: GeneralEmailState) -> dict[str, Any]:
         "type": "object",
         "required": [
             "summary", "key_points", "action_items", "requires_response",
-            "priority", "sentiment", "language", "entities", "deadlines",
-            "risks", "suggested_reply", "confidence",
+            "suggested_reply", "confidence",
         ],
         "properties": {
             "summary": {"type": "string"},
             "key_points": {"type": "string"},
             "action_items": {"type": "string"},
             "requires_response": {"type": "string", "enum": ["Yes", "No"]},
-            "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
-            "sentiment": {"type": "string"},
-            "language": {"type": "string"},
-            "entities": {"type": "string"},
-            "deadlines": {"type": "string"},
-            "risks": {"type": "string"},
             "suggested_reply": {"type": "string"},
             "confidence": {"type": "number"},
         },
@@ -116,7 +102,6 @@ def _gemini_analysis(state: GeneralEmailState) -> dict[str, Any]:
         f"{_load_rules()}\n\nEMAIL JSON:\n{json.dumps(email, ensure_ascii=False)}"
     )
     result = json.loads(response.text)
-    result["analysis_source"] = f"gemini:{DEFAULT_MODEL}"
     return result
 
 
