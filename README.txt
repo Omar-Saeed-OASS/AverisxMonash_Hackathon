@@ -17,6 +17,29 @@ Every 10 seconds by default, the service checks Gmail using GMAIL_QUERY.
 
 It only processes emails received after the FastAPI service starts running.
 
+Attachment validation
+---------------------
+Every downloaded attachment is checked before it can be uploaded to Supabase or
+sent to document processing.
+
+Supported formats are PDF, DOC, DOCX, XLS, XLSX, CSV, TXT, PNG, JPG, and JPEG.
+The checks include:
+
+- empty files are marked `corrupted` with reason `empty_file`
+- PDF, image, and legacy Office file signatures are checked
+- DOCX and XLSX archives are checked for corruption and their required document entry
+- TXT and CSV files must be valid UTF-8
+- missing or unsupported extensions are marked `unknown`
+- malformed base64 or files that cannot be parsed are marked `unreadable`
+
+Validation metadata is included in the `/check-now` output under each file as
+`validation_status` and `validation_reason`. Invalid files remain available in
+the local attachment directory for review and are uploaded to Supabase like
+valid files. The `attachments.is_corrupted` boolean is `true` when any file in
+the stored attachment set is invalid and `false` when all files are valid.
+Because this project stores an email's document set as one row with arrays, the
+boolean describes the whole row.
+
 If no new email is found, the terminal prints:
 
     Checking Gmail for new emails...
