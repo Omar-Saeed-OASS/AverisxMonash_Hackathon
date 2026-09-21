@@ -1,6 +1,5 @@
 import io
 import openpyxl
-import docx
 import pymupdf
 import pandas as pd
 
@@ -58,6 +57,14 @@ def parse_pdf_bytes(file_bytes: bytes) -> dict:
 
 def parse_docx_bytes(file_bytes: bytes) -> dict:
     # Wrap bytes in a file-like object for python-docx
+    try:
+        import docx
+    except ModuleNotFoundError:
+        return {
+            "content": "",
+            "is_scanned": False,
+            "error": "python-docx is not installed",
+        }
     doc = docx.Document(io.BytesIO(file_bytes))
     markdown_content = []
 

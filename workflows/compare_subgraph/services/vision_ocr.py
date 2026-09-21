@@ -8,6 +8,13 @@ from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
 from prompts import vision_ocr_prompt
 from dotenv import load_dotenv
 load_dotenv()
+OCR_MODEL = (
+    os.getenv("GEMINI_OCR_MODEL")
+    or os.getenv("GEMENI_OCR_MODEL")
+    or os.getenv("GEMINI_MODEL")
+    or "gemini-3.5-flash"
+)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 async def transcribe_scanned_pdf(file_bytes: bytes) -> dict:
     """
@@ -19,6 +26,9 @@ async def transcribe_scanned_pdf(file_bytes: bytes) -> dict:
     """
 
     try:
+        os.environ.pop("GOOGLE_API_KEY", None)
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+        os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
         # Attempt to parse the byte stream
         try:
             doc = pymupdf.open(stream=file_bytes, filetype="pdf")
@@ -26,7 +36,8 @@ async def transcribe_scanned_pdf(file_bytes: bytes) -> dict:
             return {"content": "", "error": f"Corrupted PDF byte stream: {str(pdf_err)}"}
 
         llm = ChatGoogleGenerativeAI(
-            model=os.getenv("GEMENI_OCR_MODEL"),
+            model=OCR_MODEL,
+            google_api_key=GEMINI_API_KEY,
             temperature=0.0,
             max_retries=2
         )

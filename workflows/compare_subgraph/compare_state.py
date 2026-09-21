@@ -33,3 +33,4 @@ class CompareState(TypedDict):
     # Extensions (UI & Custom Features)
     discrepancy_details: Optional[List[DiscrepancyDetail]]
     enterprise_risk_report: Optional[dict]
+    display_text: Optional[str]

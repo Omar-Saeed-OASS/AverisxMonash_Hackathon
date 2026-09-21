@@ -62,7 +62,9 @@ def get_db_manager() -> DBManager:
     global DB_MANAGER
 
     if DB_MANAGER is None:
-        DB_MANAGER = DBManager(SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET)
+        # DB_MANAGER = DBManager(SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET)
+        DB_MANAGER = DBManager()
+
 
     return DB_MANAGER
 
@@ -220,9 +222,8 @@ def validate_attachment(filename: str, file_data: bytes) -> tuple[str, str | Non
 
 
 def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_index: int) -> list[dict[str, Any]]:
-    """Download attachment parts to disk and return metadata plus file bytes."""
+    """Download attachment bytes in memory and return metadata."""
     attachments = []
-    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def walk_parts(parts):
         for part in parts:
@@ -251,15 +252,9 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
                     validation_status = "unreadable"
                     validation_reason = "invalid_base64_data"
 
-                safe_filename = Path(filename).name or "attachment.bin"
-                safe_name = f"email_{email_index:03d}_{safe_filename}"
-                file_path = ATTACHMENTS_DIR / safe_name
-                with file_path.open("wb") as f:
-                    f.write(file_data)
                 attachments.append(
                     {
                         "filename": filename,
-                        "local_path": str(file_path),
                         "content": file_data,
                         "content_type": part.get("mimeType") or "application/octet-stream",
                         "file_format": Path(filename).suffix.lstrip(".").lower() or None,
@@ -317,7 +312,16 @@ def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
         "spam_reason", "confidence", "spam_count", "is_blacklisted", "blacklist_status",
         "spam_action",
     )
-    category_fields = spam_fields if email_data.get("category") == "SPAM" else general_fields
+    compare_fields = (
+        "status", "review_reason", "has_defect", "defect_fields", "discrepancy_details",
+        "enterprise_risk_report", "display_text", "comparison_error",
+    )
+    if email_data.get("category") == "SPAM":
+        category_fields = spam_fields
+    elif email_data.get("category") == "BL_COMPARISON":
+        category_fields = compare_fields
+    else:
+        category_fields = general_fields
     output = {
         key: email_data[key]
         for key in (*base_fields, *category_fields)
@@ -335,7 +339,7 @@ def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
         "files": [
             {
                 "filename": attachment["filename"],
-                "local_path": attachment["local_path"],
+                "storage_path": attachment.get("storage_path"),
                 "validation_status": attachment["validation_status"],
                 "validation_reason": attachment["validation_reason"],
             }
@@ -451,6 +455,7 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
 
         EMAIL_SEQUENCE += 1
         email_data = await get_message_async(service, msg_id, EMAIL_SEQUENCE)
+        await db_manager.upload_attachments(email_data)
         await handle_email(email_data)
         await db_manager.save_email(email_data)
         processed_ids.add(msg_id)

@@ -1,6 +1,6 @@
 from typing import Literal
 from langgraph.graph import END
-from compare_state import CompareState
+from .compare_state import CompareState
 
 def route_preflight(state: CompareState) -> Literal["file_read_node", "__end__"]:
     """

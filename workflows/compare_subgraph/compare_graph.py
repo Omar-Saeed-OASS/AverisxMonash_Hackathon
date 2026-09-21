@@ -1,7 +1,7 @@
-from langgraph.graph import StateGraph, END
-from compare_state import CompareState
-import compare_nodes
-import compare_edges
+from langgraph.graph import END, START, StateGraph
+
+from . import compare_edges, compare_nodes
+from .compare_state import CompareState
 
 def build_compare_subgraph():
     """
@@ -19,7 +19,7 @@ def build_compare_subgraph():
     workflow.add_node("intelligence_node", compare_nodes.intelligence_node)
 
     # Define the Entry Point
-    workflow.set_entry_point("preflight_node")
+    workflow.add_edge(START, "preflight_node")
 
     # Add Conditional Edges (The "Interrupts" to END)
     workflow.add_conditional_edges("preflight_node", compare_edges.route_preflight)

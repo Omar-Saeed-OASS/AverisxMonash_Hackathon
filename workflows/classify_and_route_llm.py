@@ -5,6 +5,11 @@ import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 EmailCategory = Literal[
 	"BL_COMPARISON",
@@ -74,6 +79,9 @@ def _gemini_classification(email: Mapping[str, Any]) -> dict[str, Any]:
 	if not api_key:
 		raise RuntimeError("GEMINI_API_KEY is not configured")
 
+	os.environ.pop("GOOGLE_API_KEY", None)
+	os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+	os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
 	client = genai.Client(api_key=api_key)
 	schema = {
 		"type": "object",
@@ -96,15 +104,15 @@ def _gemini_classification(email: Mapping[str, Any]) -> dict[str, Any]:
 		"only the requested JSON object.\n\nEMAIL JSON:\n"
 		f"{json.dumps(dict(email), ensure_ascii=False, default=str)}"
 	)
-	response = client.models.generate_content(
+	chat = client.chats.create(
 		model=CLASSIFICATION_MODEL,
-		contents=prompt,
 		config=types.GenerateContentConfig(
 			temperature=0.0,
 			response_mime_type="application/json",
 			response_schema=schema,
 		),
 	)
+	response = chat.send_message(prompt)
 	result = json.loads(response.text)
 	result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
 	result["classification_source"] = f"gemini:{CLASSIFICATION_MODEL}"

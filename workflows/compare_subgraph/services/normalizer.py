@@ -1,5 +1,21 @@
 import logging
-from typing import Optional
+from typing import Any, Optional
+
+
+def normalize_extracted_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize extracted shipment fields before deterministic comparison."""
+    normalized = dict(data)
+    for field in ("shipper", "consignee", "notify_party", "port_of_loading", "port_of_discharge"):
+        value = normalized.get(field)
+        if isinstance(value, str):
+            normalized[field] = " ".join(value.split())
+    if "raw_weight_value" in normalized:
+        normalized["raw_weight_value"] = convert_weight_to_kg(
+            normalized.get("raw_weight_value"),
+            normalized.get("raw_weight_unit"),
+        )
+        normalized["raw_weight_unit"] = "KG"
+    return normalized
 
 
 def convert_weight_to_kg(value: Optional[float], unit: Optional[str]) -> Optional[float]:

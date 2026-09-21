@@ -1,6 +1,7 @@
 import os
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Any
 from supabase import create_client
 from dotenv import load_dotenv
@@ -40,6 +41,9 @@ class DBManager:
 
     async def save_email(self, email_data: dict[str, Any]) -> None:
         await asyncio.to_thread(self._save_email_sync, email_data)
+
+    async def upload_attachments(self, email_data: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._upload_attachments_sync, email_data)
 
     async def is_sender_blacklisted(self, sender_email: str) -> bool:
         reputation = await self.get_sender_reputation(sender_email)
@@ -93,20 +97,10 @@ class DBManager:
     def _save_email_sync(self, email_data: dict[str, Any]) -> None:
         email_uuid = str(uuid.uuid4())
         attachments = email_data["attachments"]
-        attachment_uuid = str(uuid.uuid4()) if attachments else None
-
-        for attachment in attachments:
-            storage_path = f"{attachment_uuid}/{attachment['filename']}"
-            self.client.storage.from_(self.bucket).upload(
-                storage_path,
-                attachment["content"],
-                {
-                    "content-type": attachment["content_type"],
-                    "x-upsert": "true",
-                },
-            )
-            attachment["attachment_record_id"] = attachment_uuid
-            attachment["storage_path"] = storage_path
+        attachment_uuid = attachments[0].get("attachment_record_id") if attachments else None
+        if attachments and not all(attachment.get("storage_path") for attachment in attachments):
+            self._upload_attachments_sync(email_data)
+            attachment_uuid = attachments[0]["attachment_record_id"]
 
         metadata = {
             "routing_reasoning": email_data.get("routing_reasoning", ""),
@@ -164,3 +158,24 @@ class DBManager:
                 ),
             }
         ).execute()
+
+    def _upload_attachments_sync(self, email_data: dict[str, Any]) -> None:
+        attachments = email_data.get("attachments", [])
+        if not attachments:
+            return
+
+        attachment_uuid = attachments[0].get("attachment_record_id") or str(uuid.uuid4())
+        for attachment in attachments:
+            clean_filename = Path(attachment["filename"]).name
+            storage_path = f"{attachment_uuid}/{clean_filename}"
+            if not attachment.get("storage_path"):
+                self.client.storage.from_(self.bucket).upload(
+                    storage_path,
+                    attachment["content"],
+                    {
+                        "content-type": attachment["content_type"],
+                        "x-upsert": "true",
+                    },
+                )
+            attachment["attachment_record_id"] = attachment_uuid
+            attachment["storage_path"] = storage_path
