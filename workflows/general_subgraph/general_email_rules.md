@@ -16,17 +16,6 @@ date, and body. Do not invent names, dates, commitments, attachments, or facts.
   preserving who should act when the email makes that clear. Separate multiple
   tasks with semicolons. Do not turn ordinary statements into tasks.
 - `requires_response`: exactly `Yes` or `No`.
-- `priority`: `low`, `medium`, `high`, or `urgent`. Use urgent only for a
-  time-critical issue, immediate operational impact, or explicit urgency.
-- `sentiment`: a short label such as neutral, positive, concerned, or negative.
-- `language`: the primary language of the body, or `unknown` if there is not
-  enough text.
-- `entities`: notable people, organizations, locations, products, documents, or
-  reference numbers in one string, or `None identified`.
-- `deadlines`: only dates or time limits explicitly present, in one string, or
-  `None identified`.
-- `risks`: concrete missing information, ambiguity, deadlines, or operational
-  concerns in one string, or `None identified`.
 - `suggested_reply`: a short professional draft only when a response is needed;
   otherwise return an empty string. Do not claim an action has already happened.
 - `confidence`: a number from 0 to 1 reflecting how clearly the email supports

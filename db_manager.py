@@ -56,7 +56,7 @@ class DBManager:
             .maybe_single()
             .execute()
         )
-        return result.data or {}
+        return (result.data if result is not None else None) or {}
 
     async def record_spam_decision(self, spam_data: dict[str, Any]) -> dict[str, Any]:
         return await asyncio.to_thread(self._record_spam_decision_sync, spam_data)
@@ -69,7 +69,8 @@ class DBManager:
             .eq("sender_email", sender_email)
             .maybe_single()
             .execute()
-        ).data or {}
+        )
+        current = (current.data if current is not None else None) or {}
         spam_count = int(current.get("spam_count") or 0) + 1
         threshold = int(spam_data.get("blacklist_threshold") or 3)
         is_blacklisted = bool(current.get("is_blacklisted")) or spam_count >= threshold
@@ -107,6 +108,33 @@ class DBManager:
             attachment["attachment_record_id"] = attachment_uuid
             attachment["storage_path"] = storage_path
 
+        metadata = {
+            "routing_reasoning": email_data.get("routing_reasoning", ""),
+        }
+        if email_data.get("category") == "SPAM":
+            metadata.update(
+                {
+                    key: email_data[key]
+                    for key in (
+                        "spam_score", "is_spam", "spam_reasons", "risk_signals",
+                        "recommended_action", "spam_reason", "confidence",
+                        "spam_count", "is_blacklisted", "blacklist_status", "spam_action",
+                    )
+                    if key in email_data
+                }
+            )
+        else:
+            metadata.update(
+                {
+                    key: email_data[key]
+                    for key in (
+                        "summary", "key_points", "action_items", "requires_response",
+                        "suggested_reply", "confidence",
+                    )
+                    if key in email_data
+                }
+            )
+
         self.client.table("emails").insert(
             {
                 "id": email_uuid,
@@ -115,6 +143,8 @@ class DBManager:
                 "received_at": email_data["received_at"],
                 "raw_payload": email_data["raw_payload"],
                 "attached_docs": bool(attachments),
+                "category": email_data.get("category"),
+                "metadata": metadata,
             }
         ).execute()
 

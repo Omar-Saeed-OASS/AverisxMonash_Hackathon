@@ -1,6 +1,10 @@
 -- Run this migration in the Supabase SQL editor.
 -- The application uses the service-role key for these server-side writes.
 
+alter table public.emails
+  add column if not exists category text,
+  add column if not exists metadata jsonb not null default '{}'::jsonb;
+
 -- Remove these only if they were created by an earlier version of this migration.
 alter table public.emails
   drop column if exists sender_email,
