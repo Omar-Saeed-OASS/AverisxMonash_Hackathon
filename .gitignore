@@ -50,3 +50,4 @@ htmlcov/
 test_docs/
 .log
 test.py
+vertex_key.json
