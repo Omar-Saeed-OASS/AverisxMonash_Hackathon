@@ -17,11 +17,12 @@ def build_compare_subgraph():
     workflow.add_node("normalize_node", compare_nodes.normalize_node)
     workflow.add_node("compare_node", compare_nodes.compare_node)
     workflow.add_node("intelligence_node", compare_nodes.intelligence_node)
+    workflow.add_node("db_save_node", compare_nodes.db_save_node)
 
     # Define the Entry Point
     workflow.add_edge(START, "preflight_node")
 
-    # Add Conditional Edges (The "Interrupts" to END)
+    # Route both successful and early-review outcomes through persistence.
     workflow.add_conditional_edges("preflight_node", compare_edges.route_preflight)
     workflow.add_conditional_edges("file_read_node", compare_edges.route_file_read)
     workflow.add_conditional_edges("extractor_node", compare_edges.route_extractor)
@@ -29,7 +30,8 @@ def build_compare_subgraph():
     # Add Linear Edges (The main execution path)
     workflow.add_edge("normalize_node", "compare_node")
     workflow.add_edge("compare_node", "intelligence_node")
-    workflow.add_edge("intelligence_node", END)
+    workflow.add_edge("intelligence_node", "db_save_node")
+    workflow.add_edge("db_save_node", END)
 
     # Compile the executable graph
     # (Optional: Pass checkpointer=MemorySaver() here later for HITL pauses)

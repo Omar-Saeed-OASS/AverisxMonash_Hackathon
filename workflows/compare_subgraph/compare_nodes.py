@@ -243,6 +243,16 @@ async def intelligence_node(state: CompareState, config: RunnableConfig) -> Dict
     lines.extend(["\n=== RISK REPORT ===", str(risk_report)])
     return {"enterprise_risk_report": risk_report, "display_text": "\n".join(lines)}
 
+
+async def db_save_node(state: CompareState, config: RunnableConfig) -> Dict[str, Any]:
+    """Persist the current comparison state, including early review results."""
+    email_id = state.get("email_id")
+    if email_id:
+        from db_manager import DBManager
+
+        await DBManager().update_email_results(email_id, state)
+    return {}
+
 #     risk_report = await generate_risk_report(state.get("bl_extracted", {}))
 #
 #     return {

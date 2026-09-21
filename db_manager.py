@@ -132,7 +132,7 @@ class DBManager:
         self.client.table("emails").insert(
             {
                 "id": email_uuid,
-                "email_id": email_data["from_email"],
+                "email_id": email_data["email_id"],
                 "sender": email_data["from_name"],
                 "received_at": email_data["received_at"],
                 "raw_payload": email_data["raw_payload"],
@@ -179,3 +179,35 @@ class DBManager:
                 )
             attachment["attachment_record_id"] = attachment_uuid
             attachment["storage_path"] = storage_path
+
+    async def update_email_results(self, email_id: str, final_state: dict[str, Any]) -> None:
+        """Persist the comparison result on the existing email row."""
+        await asyncio.to_thread(self.update_email_results_sync, email_id, final_state)
+
+    def update_email_results_sync(self, email_id: str, state: dict[str, Any]) -> None:
+        update_data = {
+            "status": state.get("status"),
+            "has_defect": state.get("has_defect"),
+            "defect_fields": state.get("defect_fields"),
+            "review_reason": state.get("review_reason"),
+            "si_extracted": state.get("si_extracted"),
+            "bl_extracted": state.get("bl_extracted"),
+            "enterprise_risk_report": state.get("enterprise_risk_report"),
+            "updated_at": "now()",
+        }
+        update_data = {
+            key: value for key, value in update_data.items() if value is not None
+        }
+
+        if "discrepancy_details" in state:
+            update_data["metadata"] = {
+                "discrepancy_details": state.get("discrepancy_details")
+            }
+
+        try:
+            self.client.table("emails").update(update_data).eq(
+                "email_id", email_id
+            ).execute()
+        except Exception:
+            logger.exception("Failed to update database for email %s", email_id)
+            raise

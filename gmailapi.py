@@ -458,6 +458,8 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
         await db_manager.upload_attachments(email_data)
         await handle_email(email_data)
         await db_manager.save_email(email_data)
+        if email_data.get("category") == "BL_COMPARISON":
+            await db_manager.update_email_results(email_data["email_id"], email_data)
         processed_ids.add(msg_id)
         processed_ids_changed = True
         new_emails.append(serialize_email_for_output(email_data))
