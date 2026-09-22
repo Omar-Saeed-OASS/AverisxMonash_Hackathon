@@ -12,7 +12,9 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -497,14 +499,136 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gmail Email Listener", lifespan=lifespan)
 
+FRONTEND_FILE = Path(__file__).with_name("index.html")
+STATIC_DIR = Path(__file__).with_name("static")
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-@app.get("/")
-def root():
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _dashboard_record(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    raw_payload = row.get("raw_payload") or {}
+    headers = {
+        item.get("name", "").lower(): item.get("value", "")
+        for item in (raw_payload.get("payload", {}).get("headers", []) or [])
+        if isinstance(item, dict)
+    }
+    return _json_safe({
+        "id": row.get("email_id") or row.get("id"),
+        "row_id": row.get("id"),
+        "sender": row.get("sender") or "Unknown sender",
+        "sender_email": headers.get("from", ""),
+        "subject": headers.get("subject", "") or metadata.get("subject", "(No subject)"),
+        "body_preview": " ".join(str(raw_payload.get("snippet", "") or "").split())[:180],
+        "received_at": row.get("received_at"),
+        "category": row.get("category") or "GENERAL",
+        "status": row.get("status") or metadata.get("recommended_action") or "Processed",
+        "has_defect": row.get("has_defect"),
+        "defect_fields": row.get("defect_fields") or [],
+        "review_reason": row.get("review_reason"),
+        "attached_docs": row.get("attached_docs", False),
+        "metadata": metadata,
+    })
+
+
+@app.get("/api/dashboard")
+async def dashboard():
+    try:
+        rows = await get_db_manager().list_emails()
+        records = [_dashboard_record(row) for row in rows]
+        return {"connected": True, "records": records, "count": len(records)}
+    except Exception as exc:
+        # The dashboard should still load while Supabase is being configured.
+        return {"connected": False, "records": [], "count": 0, "error": str(exc)}
+
+
+@app.get("/api/emails/{email_id}")
+async def email_detail(email_id: str):
+    try:
+        row = await get_db_manager().get_email(email_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return _json_safe(row)
+
+
+@app.get("/api/attachments/download")
+async def download_attachment(path: str):
+    db_manager = get_db_manager()
+    try:
+        data = await db_manager.download_file_bytes(db_manager.bucket, path)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    filename = Path(path).name
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/status")
+async def status():
     return {
-        "status": "running",
         "gmail_query": GMAIL_QUERY,
         "poll_seconds": POLL_SECONDS,
+        "max_results": MAX_RESULTS,
     }
+
+
+@app.post("/api/emails/{email_id}/decision")
+async def record_email_decision(email_id: str, payload: dict[str, Any]):
+    decision = str(payload.get("decision") or "").upper()
+    if decision not in {"APPROVED", "REJECTED"}:
+        raise HTTPException(status_code=400, detail="decision must be APPROVED or REJECTED")
+    try:
+        row = await get_db_manager().record_human_decision(
+            email_id, decision, payload.get("note")
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return _json_safe(row)
+
+
+@app.post("/api/route")
+async def route_from_ui(payload: dict[str, Any]):
+    email = {
+        "email_id": payload.get("email_id") or f"ui_{int(time.time())}",
+        "from_name": payload.get("from_name", "SmartShip operator"),
+        "from_email": payload.get("from_email", "ui@smartship.local"),
+        "received_at": payload.get("received_at") or datetime.now(timezone.utc).isoformat(),
+        "subject": payload.get("subject", ""),
+        "body": payload.get("body", ""),
+        "attachments": payload.get("attachments", []),
+    }
+    classification = await classify_email(email)
+    result = await route_email(email, classification=classification)
+    return _json_safe({"classification": classification, "result": result})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    raise HTTPException(status_code=404)
+
+
+@app.get("/", include_in_schema=False)
+def frontend():
+    if not FRONTEND_FILE.exists():
+        raise HTTPException(status_code=404, detail="Frontend file is missing")
+    return FileResponse(FRONTEND_FILE)
 
 
 @app.post("/check-now")

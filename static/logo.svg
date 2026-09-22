@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="hull" x1="4" y1="30" x2="60" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#13323d"/>
+      <stop offset="1" stop-color="#1f6d77"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="46" x2="64" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2d8a96"/>
+      <stop offset="1" stop-color="#7fd6d9"/>
+    </linearGradient>
+  </defs>
+  <path d="M14 40h36l5 6-6 6H15l-6-6z" fill="url(#hull)"/>
+  <rect x="26" y="16" width="5" height="16" rx="1" fill="#13323d"/>
+  <path d="M31 18h11l6 12H31z" fill="#2d8a96"/>
+  <circle cx="47" cy="24" r="2" fill="#eafcfb"/>
+  <path d="M2 48c5 4 9 4 14 0s9-4 14 0 9 4 14 0 9-4 14 0" stroke="url(#wave)" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <path d="M2 54c5 4 9 4 14 0s9-4 14 0 9 4 14 0 9-4 14 0" stroke="#c7ecec" stroke-width="2" stroke-linecap="round" fill="none" opacity=".6"/>
+  <g stroke="#eafcfb" stroke-width="1.4" stroke-linecap="round" opacity=".85">
+    <path d="M20 40v-4h6"/>
+    <circle cx="26" cy="36" r="1.4" fill="#eafcfb" stroke="none"/>
+    <path d="M40 40v-5h-5"/>
+    <circle cx="35" cy="35" r="1.4" fill="#eafcfb" stroke="none"/>
+  </g>
+</svg>

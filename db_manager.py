@@ -1,6 +1,7 @@
 import os
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from supabase import create_client
@@ -41,6 +42,66 @@ class DBManager:
 
     async def save_email(self, email_data: dict[str, Any]) -> None:
         await asyncio.to_thread(self._save_email_sync, email_data)
+
+    async def list_emails(self, limit: int = 100) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_emails_sync, limit)
+
+    def _list_emails_sync(self, limit: int) -> list[dict[str, Any]]:
+        result = (
+            self.client.table("emails")
+            .select("*")
+            .order("received_at", desc=True)
+            .limit(max(1, min(limit, 500)))
+            .execute()
+        )
+        return result.data or []
+
+    async def get_email(self, email_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_email_sync, email_id)
+
+    def _get_email_sync(self, email_id: str) -> dict[str, Any] | None:
+        # email_id is not guaranteed unique (repeated test sends can insert
+        # duplicates), so take the most recent row instead of maybe_single(),
+        # which raises when more than one row matches.
+        result = (
+            self.client.table("emails")
+            .select("*")
+            .eq("email_id", email_id)
+            .order("received_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        row = rows[0] if rows else None
+        if not row:
+            # The dashboard falls back to the row's UUID `id` when email_id is
+            # blank, so accept that as a lookup key too. A non-UUID value here
+            # (the common case: a real email_id with no match) raises at the
+            # DB level rather than returning an empty result, so treat that
+            # the same as "not found".
+            try:
+                by_uuid = (
+                    self.client.table("emails")
+                    .select("*")
+                    .eq("id", email_id)
+                    .limit(1)
+                    .execute()
+                )
+                uuid_rows = by_uuid.data or []
+            except Exception:
+                uuid_rows = []
+            row = uuid_rows[0] if uuid_rows else None
+        if not row:
+            return None
+
+        attachments = (
+            self.client.table("attachments")
+            .select("*")
+            .eq("email_id", row["id"])
+            .execute()
+        )
+        row["attachment_records"] = attachments.data or []
+        return row
 
     async def upload_attachments(self, email_data: dict[str, Any]) -> None:
         await asyncio.to_thread(self._upload_attachments_sync, email_data)
@@ -179,6 +240,53 @@ class DBManager:
                 )
             attachment["attachment_record_id"] = attachment_uuid
             attachment["storage_path"] = storage_path
+
+    async def record_human_decision(
+        self, email_id: str, decision: str, note: str | None
+    ) -> dict[str, Any]:
+        """Persist an adjuster's approve/reject call on a flagged BL_COMPARISON email."""
+        return await asyncio.to_thread(
+            self._record_human_decision_sync, email_id, decision, note
+        )
+
+    def _record_human_decision_sync(
+        self, email_id: str, decision: str, note: str | None
+    ) -> dict[str, Any]:
+        # email_id is not guaranteed unique, so resolve to the most recent
+        # matching row's primary key and update that exact row only.
+        current = (
+            self.client.table("emails")
+            .select("id, metadata")
+            .eq("email_id", email_id)
+            .order("received_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = current.data or []
+        if not rows:
+            return {}
+        row = rows[0]
+
+        current_metadata = dict(row.get("metadata") or {})
+        current_metadata["human_review"] = {
+            "decision": decision,
+            "note": note,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        result = (
+            self.client.table("emails")
+            .update(
+                {
+                    "status": decision,
+                    "metadata": current_metadata,
+                    "updated_at": "now()",
+                }
+            )
+            .eq("id", row["id"])
+            .execute()
+        )
+        return result.data[0] if result.data else {}
 
     async def update_email_results(self, email_id: str, final_state: dict[str, Any]) -> None:
         """Persist the comparison result on the existing email row."""
