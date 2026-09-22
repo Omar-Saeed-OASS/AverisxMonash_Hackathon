@@ -12,7 +12,9 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -62,7 +64,9 @@ def get_db_manager() -> DBManager:
     global DB_MANAGER
 
     if DB_MANAGER is None:
-        DB_MANAGER = DBManager(SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET)
+        # DB_MANAGER = DBManager(SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET)
+        DB_MANAGER = DBManager()
+
 
     return DB_MANAGER
 
@@ -220,9 +224,8 @@ def validate_attachment(filename: str, file_data: bytes) -> tuple[str, str | Non
 
 
 def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_index: int) -> list[dict[str, Any]]:
-    """Download attachment parts to disk and return metadata plus file bytes."""
+    """Download attachment bytes in memory and return metadata."""
     attachments = []
-    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def walk_parts(parts):
         for part in parts:
@@ -251,15 +254,9 @@ def extract_attachments(service, msg_id: str, payload: dict[str, Any], email_ind
                     validation_status = "unreadable"
                     validation_reason = "invalid_base64_data"
 
-                safe_filename = Path(filename).name or "attachment.bin"
-                safe_name = f"email_{email_index:03d}_{safe_filename}"
-                file_path = ATTACHMENTS_DIR / safe_name
-                with file_path.open("wb") as f:
-                    f.write(file_data)
                 attachments.append(
                     {
                         "filename": filename,
-                        "local_path": str(file_path),
                         "content": file_data,
                         "content_type": part.get("mimeType") or "application/octet-stream",
                         "file_format": Path(filename).suffix.lstrip(".").lower() or None,
@@ -288,7 +285,7 @@ def get_message(service, msg_id: str, email_index: int) -> dict[str, Any]:
     ).isoformat()
 
     return {
-        "email_id": f"email_{email_index:03d}",
+        "email_id": from_email,
         "from_name": from_name,
         "from_email": from_email,
         "received_at": received_at,
@@ -317,7 +314,16 @@ def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
         "spam_reason", "confidence", "spam_count", "is_blacklisted", "blacklist_status",
         "spam_action",
     )
-    category_fields = spam_fields if email_data.get("category") == "SPAM" else general_fields
+    compare_fields = (
+        "status", "review_reason", "has_defect", "defect_fields", "discrepancy_details",
+        "enterprise_risk_report", "display_text", "comparison_error",
+    )
+    if email_data.get("category") == "SPAM":
+        category_fields = spam_fields
+    elif email_data.get("category") == "BL_COMPARISON":
+        category_fields = compare_fields
+    else:
+        category_fields = general_fields
     output = {
         key: email_data[key]
         for key in (*base_fields, *category_fields)
@@ -335,7 +341,7 @@ def serialize_email_for_output(email_data: dict[str, Any]) -> dict[str, Any]:
         "files": [
             {
                 "filename": attachment["filename"],
-                "local_path": attachment["local_path"],
+                "storage_path": attachment.get("storage_path"),
                 "validation_status": attachment["validation_status"],
                 "validation_reason": attachment["validation_reason"],
             }
@@ -440,7 +446,7 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
             processed_ids_changed = True
             new_emails.append(
                 {
-                    "email_id": msg_id,
+                    "email_id": sender_email,
                     "from_name": sender_name,
                     "from_email": sender_email,
                     "is_blacklisted": True,
@@ -451,8 +457,11 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
 
         EMAIL_SEQUENCE += 1
         email_data = await get_message_async(service, msg_id, EMAIL_SEQUENCE)
+        await db_manager.upload_attachments(email_data)
         await handle_email(email_data)
         await db_manager.save_email(email_data)
+        if email_data.get("category") == "BL_COMPARISON":
+            await db_manager.update_email_results(email_data["email_id"], email_data)
         processed_ids.add(msg_id)
         processed_ids_changed = True
         new_emails.append(serialize_email_for_output(email_data))
@@ -490,14 +499,136 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gmail Email Listener", lifespan=lifespan)
 
+FRONTEND_FILE = Path(__file__).with_name("index.html")
+STATIC_DIR = Path(__file__).with_name("static")
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-@app.get("/")
-def root():
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _dashboard_record(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    raw_payload = row.get("raw_payload") or {}
+    headers = {
+        item.get("name", "").lower(): item.get("value", "")
+        for item in (raw_payload.get("payload", {}).get("headers", []) or [])
+        if isinstance(item, dict)
+    }
+    return _json_safe({
+        "id": row.get("email_id") or row.get("id"),
+        "row_id": row.get("id"),
+        "sender": row.get("sender") or "Unknown sender",
+        "sender_email": headers.get("from", ""),
+        "subject": headers.get("subject", "") or metadata.get("subject", "(No subject)"),
+        "body_preview": " ".join(str(raw_payload.get("snippet", "") or "").split())[:180],
+        "received_at": row.get("received_at"),
+        "category": row.get("category") or "GENERAL",
+        "status": row.get("status") or metadata.get("recommended_action") or "Processed",
+        "has_defect": row.get("has_defect"),
+        "defect_fields": row.get("defect_fields") or [],
+        "review_reason": row.get("review_reason"),
+        "attached_docs": row.get("attached_docs", False),
+        "metadata": metadata,
+    })
+
+
+@app.get("/api/dashboard")
+async def dashboard():
+    try:
+        rows = await get_db_manager().list_emails()
+        records = [_dashboard_record(row) for row in rows]
+        return {"connected": True, "records": records, "count": len(records)}
+    except Exception as exc:
+        # The dashboard should still load while Supabase is being configured.
+        return {"connected": False, "records": [], "count": 0, "error": str(exc)}
+
+
+@app.get("/api/emails/{email_id}")
+async def email_detail(email_id: str):
+    try:
+        row = await get_db_manager().get_email(email_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return _json_safe(row)
+
+
+@app.get("/api/attachments/download")
+async def download_attachment(path: str):
+    db_manager = get_db_manager()
+    try:
+        data = await db_manager.download_file_bytes(db_manager.bucket, path)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    filename = Path(path).name
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/status")
+async def status():
     return {
-        "status": "running",
         "gmail_query": GMAIL_QUERY,
         "poll_seconds": POLL_SECONDS,
+        "max_results": MAX_RESULTS,
     }
+
+
+@app.post("/api/emails/{email_id}/decision")
+async def record_email_decision(email_id: str, payload: dict[str, Any]):
+    decision = str(payload.get("decision") or "").upper()
+    if decision not in {"APPROVED", "REJECTED"}:
+        raise HTTPException(status_code=400, detail="decision must be APPROVED or REJECTED")
+    try:
+        row = await get_db_manager().record_human_decision(
+            email_id, decision, payload.get("note")
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return _json_safe(row)
+
+
+@app.post("/api/route")
+async def route_from_ui(payload: dict[str, Any]):
+    email = {
+        "email_id": payload.get("email_id") or f"ui_{int(time.time())}",
+        "from_name": payload.get("from_name", "SmartShip operator"),
+        "from_email": payload.get("from_email", "ui@smartship.local"),
+        "received_at": payload.get("received_at") or datetime.now(timezone.utc).isoformat(),
+        "subject": payload.get("subject", ""),
+        "body": payload.get("body", ""),
+        "attachments": payload.get("attachments", []),
+    }
+    classification = await classify_email(email)
+    result = await route_email(email, classification=classification)
+    return _json_safe({"classification": classification, "result": result})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    raise HTTPException(status_code=404)
+
+
+@app.get("/", include_in_schema=False)
+def frontend():
+    if not FRONTEND_FILE.exists():
+        raise HTTPException(status_code=404, detail="Frontend file is missing")
+    return FileResponse(FRONTEND_FILE)
 
 
 @app.post("/check-now")

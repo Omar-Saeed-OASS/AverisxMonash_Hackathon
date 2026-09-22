@@ -10,6 +10,13 @@ from google.api_core.exceptions import GoogleAPIError
 from dotenv import load_dotenv
 
 load_dotenv()
+EXTRACTION_MODEL = (
+    os.getenv("GEMINI_EXTRACTION_MODEL")
+    or os.getenv("GEMENI_EXTRACTION_MODEL")
+    or os.getenv("GEMINI_MODEL")
+    or "gemini-3.5-flash"
+)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 async def extract_shipment_data(document_text: str) -> dict:
@@ -24,9 +31,13 @@ async def extract_shipment_data(document_text: str) -> dict:
         return {"data": None, "error": "Empty document text provided."}
 
     try:
+        os.environ.pop("GOOGLE_API_KEY", None)
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+        os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
         # Initialize the model
         llm = ChatGoogleGenerativeAI(
-            model=os.getenv("GEMENI_EXTRACTION_MODEL"),
+            model=EXTRACTION_MODEL,
+            google_api_key=GEMINI_API_KEY,
             temperature=0.0,
             max_retries=2
         )

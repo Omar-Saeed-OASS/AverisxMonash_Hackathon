@@ -7,3 +7,6 @@ python-dotenv
 supabase
 langgraph
 google-genai
+langchain-google-genai
+python-docx
+tabulate

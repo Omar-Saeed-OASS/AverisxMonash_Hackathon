@@ -109,6 +109,12 @@ Local setup
 
     http://localhost:8000
 
+  The SmartShip AI operations console is served from the root page. It includes
+  live dashboard and inbox views backed by Supabase, a Gmail check action, and a
+  Route Lab that invokes the classifier, router, and downstream general, spam,
+  or document-comparison subgraph. If Supabase is not configured yet, the page
+  still loads and shows the connection as pending.
+
 6. To manually force a Gmail check:
 
     curl -X POST http://localhost:8000/check-now
@@ -194,6 +200,16 @@ Shows service status.
 
 GET /health
 Health check endpoint for Docker or cloud hosting.
+
+GET /api/dashboard
+Returns dashboard-safe email records from Supabase.
+
+GET /api/emails/{email_id}
+Returns one stored email record.
+
+POST /api/route
+Runs a supplied email through classification and the router subgraph without
+persisting the result.
 
 POST /check-now
 Manually checks Gmail immediately.

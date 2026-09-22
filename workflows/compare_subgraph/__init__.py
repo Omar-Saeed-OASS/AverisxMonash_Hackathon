@@ -1,3 +1,3 @@
-from .general_graph import build_general_graph, general_graph
+from .compare_graph import build_compare_subgraph, compare_subgraph
 
-__all__ = ["build_general_graph", "general_graph"]
+__all__ = ["build_compare_subgraph", "compare_subgraph"]
