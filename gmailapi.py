@@ -285,7 +285,7 @@ def get_message(service, msg_id: str, email_index: int) -> dict[str, Any]:
     ).isoformat()
 
     return {
-        "email_id": f"email_{email_index:03d}",
+        "email_id": from_email,
         "from_name": from_name,
         "from_email": from_email,
         "received_at": received_at,
@@ -446,7 +446,7 @@ async def check_for_new_emails() -> list[dict[str, Any]]:
             processed_ids_changed = True
             new_emails.append(
                 {
-                    "email_id": msg_id,
+                    "email_id": sender_email,
                     "from_name": sender_name,
                     "from_email": sender_email,
                     "is_blacklisted": True,
